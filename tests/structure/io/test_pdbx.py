@@ -330,6 +330,61 @@ def test_bond_sparsity():
 
 
 @pytest.mark.parametrize("format", ["cif", "bcif"])
+def test_component_atoms(tmp_path, format):
+    """
+    Check if the ``chem_comp_atom`` category is written alongside ``chem_comp_bond``,
+    as ``chem_comp_atom`` is its parent category:
+    Each atom referenced in ``chem_comp_bond`` (and ``atom_site``) must appear
+    exactly once in ``chem_comp_atom`` with the element of the atom.
+    """
+    File = pdbx.CIFFile if format == "cif" else pdbx.BinaryCIFFile
+    path = data_dir("structure") / "pdb" / f"1l2y.{format}"
+    atoms = pdbx.get_structure(File.read(path), include_bonds=True)
+    ref_elements = {
+        (res_name, atom_name): element
+        for res_name, atom_name, element in zip(
+            atoms.res_name, atoms.atom_name, atoms.element
+        )
+    }
+
+    test_pdbx_file = File()
+    pdbx.set_structure(test_pdbx_file, atoms)
+    file_path = tmp_path / f"test.{format}"
+    test_pdbx_file.write(file_path)
+    block = File.read(file_path).block
+
+    chem_comp_atom = block["chem_comp_atom"]
+    comp_atoms = list(
+        zip(
+            chem_comp_atom["comp_id"].as_array(str),
+            chem_comp_atom["atom_id"].as_array(str),
+        )
+    )
+    # Each atom of a component is listed exactly once
+    assert len(comp_atoms) == len(set(comp_atoms))
+    assert chem_comp_atom["pdbx_ordinal"].as_array(int).tolist() == list(
+        range(1, len(comp_atoms) + 1)
+    )
+    for comp_atom, element in zip(
+        comp_atoms, chem_comp_atom["type_symbol"].as_array(str)
+    ):
+        assert element == ref_elements[comp_atom]
+
+    chem_comp_bond = block["chem_comp_bond"]
+    bond_comp_id = chem_comp_bond["comp_id"].as_array(str)
+    for column in ["atom_id_1", "atom_id_2"]:
+        bond_atom_id = chem_comp_bond[column].as_array(str)
+        assert set(zip(bond_comp_id, bond_atom_id)) <= set(comp_atoms)
+    atom_site = block["atom_site"]
+    assert set(
+        zip(
+            atom_site["label_comp_id"].as_array(str),
+            atom_site["label_atom_id"].as_array(str),
+        )
+    ) == set(comp_atoms)
+
+
+@pytest.mark.parametrize("format", ["cif", "bcif"])
 def test_extra_fields(tmp_path, format):
     EXTRA_FIELDS = ["atom_id", "b_factor", "occupancy", "charge", "entity_id"]
 
