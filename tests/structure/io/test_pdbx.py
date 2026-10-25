@@ -330,16 +330,27 @@ def test_bond_sparsity():
 
 
 @pytest.mark.parametrize("format", ["cif", "bcif"])
-def test_component_atoms(tmp_path, format):
+def test_component_categories(tmp_path, format):
     """
-    Check if the ``chem_comp_atom`` category is written alongside ``chem_comp_bond``,
-    as ``chem_comp_atom`` is its parent category:
+    Check if the ``chem_comp`` and ``chem_comp_atom`` categories are written alongside
+    ``chem_comp_bond``, as they are its parent categories:
     Each atom referenced in ``chem_comp_bond`` (and ``atom_site``) must appear
-    exactly once in ``chem_comp_atom`` with the element of the atom.
+    exactly once in ``chem_comp_atom`` with the element of the atom, and each
+    component must appear exactly once in ``chem_comp`` with the type given in the
+    reference file.
     """
     File = pdbx.CIFFile if format == "cif" else pdbx.BinaryCIFFile
     path = data_dir("structure") / "pdb" / f"1l2y.{format}"
-    atoms = pdbx.get_structure(File.read(path), include_bonds=True)
+    ref_pdbx_file = File.read(path)
+    ref_chem_comp = ref_pdbx_file.block["chem_comp"]
+    # The component type is case-insensitive
+    ref_types = dict(
+        zip(
+            ref_chem_comp["id"].as_array(str),
+            np.char.lower(ref_chem_comp["type"].as_array(str)),
+        )
+    )
+    atoms = pdbx.get_structure(ref_pdbx_file, include_bonds=True)
     ref_elements = {
         (res_name, atom_name): element
         for res_name, atom_name, element in zip(
@@ -382,6 +393,40 @@ def test_component_atoms(tmp_path, format):
             atom_site["label_atom_id"].as_array(str),
         )
     ) == set(comp_atoms)
+
+    chem_comp = block["chem_comp"]
+    comp_ids = chem_comp["id"].as_array(str).tolist()
+    # Each component is listed exactly once
+    assert len(comp_ids) == len(set(comp_ids))
+    assert set(comp_ids) == {comp_id for comp_id, _ in comp_atoms}
+    for comp_id, comp_type in zip(comp_ids, chem_comp["type"].as_array(str)):
+        assert comp_type.lower() == ref_types[comp_id]
+
+
+def test_unknown_component_type():
+    """
+    Check if a component that is unknown to the *Chemical Component Dictionary*
+    gets the type ``'other'`` in the ``chem_comp`` category.
+    """
+    # CCD identifiers never contain an underscore
+    UNKNOWN_RES_NAME = "MOL_1"
+
+    atoms = struc.AtomArray(4)
+    atoms.atom_name = ["C1", "C2", "N", "CA"]
+    atoms.res_id = [1, 1, 2, 2]
+    atoms.res_name = [UNKNOWN_RES_NAME, UNKNOWN_RES_NAME, "GLY", "GLY"]
+    atoms.element = ["C", "C", "N", "C"]
+    atoms.bonds = struc.BondList(4, np.array([[0, 1], [2, 3]]))
+
+    pdbx_file = pdbx.CIFFile()
+    pdbx.set_structure(pdbx_file, atoms)
+    chem_comp = pdbx_file.block["chem_comp"]
+
+    assert chem_comp["id"].as_array(str).tolist() == [UNKNOWN_RES_NAME, "GLY"]
+    assert np.char.lower(chem_comp["type"].as_array(str)).tolist() == [
+        "other",
+        "peptide linking",
+    ]
 
 
 @pytest.mark.parametrize("format", ["cif", "bcif"])

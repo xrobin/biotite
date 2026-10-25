@@ -49,6 +49,7 @@ from biotite.structure.filter import (
 )
 from biotite.structure.geometry import centroid
 from biotite.structure.info.bonds import bonds_in_residue
+from biotite.structure.info.misc import link_type
 from biotite.structure.io.pdbx.bcif import (
     BinaryCIFBlock,
     BinaryCIFCategory,
@@ -894,9 +895,10 @@ def set_structure(
     numbering.
     Furthermore, if the structure has an associated :class:`BondList`,
     intra-residue bonds will be written into the ``chem_comp_bond``
-    category, accompanied by the atoms of each residue in the
-    ``chem_comp_atom`` category, and inter-residue bonds will be written
-    into the ``struct_conn`` category.
+    category, accompanied by the residues in the ``chem_comp`` category
+    and the atoms of each residue in the ``chem_comp_atom`` category,
+    and inter-residue bonds will be written into the ``struct_conn``
+    category.
 
     Parameters
     ----------
@@ -1032,8 +1034,9 @@ def set_structure(
             block["struct_conn"] = struct_conn  # pyright: ignore[reportArgumentType]
         chem_comp_bond = _set_intra_residue_bonds(array, atom_site)
         if chem_comp_bond is not None:
-            # 'chem_comp_atom' is the parent category of 'chem_comp_bond'
-            # -> without it the file would be invalid
+            # 'chem_comp' and 'chem_comp_atom' are the parent categories of
+            # 'chem_comp_bond' -> without them the file would be invalid
+            block["chem_comp"] = _set_components(array, atom_site)  # pyright: ignore[reportArgumentType]
             block["chem_comp_atom"] = _set_component_atoms(array, atom_site)  # pyright: ignore[reportArgumentType]
             block["chem_comp_bond"] = chem_comp_bond  # pyright: ignore[reportArgumentType]
 
@@ -1241,6 +1244,31 @@ def _set_intra_residue_bonds(
         np.full(n_bonds, MaskValue.MISSING),
     )
     return chem_comp_bond
+
+
+def _set_components(
+    array: AtomArray[Any] | AtomArrayStack[Any, Any], atom_site: _Category
+) -> _Category:
+    """
+    Create the ``chem_comp`` category containing each unique residue name in the
+    structure.
+    The component type is taken from the *Chemical Component Dictionary*;
+    components unknown to it get the type ``'other'``.
+    ``atom_site`` is only used to infer the right :class:`Category` type
+    (either :class:`CIFCategory` or :class:`BinaryCIFCategory`).
+    """
+    Category: Any = type(atom_site)
+
+    _, unique_indices = np.unique(array.res_name, return_index=True)
+    unique_indices.sort()
+    comp_id = array.res_name[unique_indices]
+
+    chem_comp = Category()
+    chem_comp["id"] = comp_id
+    chem_comp["type"] = np.array(
+        [link_type(res_name) or "other" for res_name in comp_id]
+    )
+    return chem_comp
 
 
 def _set_component_atoms(
