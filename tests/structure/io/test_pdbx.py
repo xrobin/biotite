@@ -430,6 +430,63 @@ def test_unknown_component_type():
 
 
 @pytest.mark.parametrize("format", ["cif", "bcif"])
+def test_existing_components(format):
+    """
+    Check if an existing ``chem_comp`` category is kept as is, when a structure is
+    written into the file, and only the components missing in it are appended.
+    """
+    # CCD identifiers never contain an underscore
+    NEW_RES_NAME = "MOL_1"
+
+    File = pdbx.CIFFile if format == "cif" else pdbx.BinaryCIFFile
+    path = data_dir("structure") / "pdb" / f"1l2y.{format}"
+    pdbx_file = File.read(path)
+    ref_chem_comp = pdbx_file.block["chem_comp"]
+    ref_columns = {
+        key: (column.as_array(str), _get_mask(column))
+        for key, column in ref_chem_comp.items()
+    }
+    atoms = pdbx.get_structure(pdbx_file, model=1, include_bonds=True)
+
+    # All components are already present
+    pdbx.set_structure(pdbx_file, atoms)
+    assert pdbx_file.block["chem_comp"] is ref_chem_comp
+
+    new_residue = struc.AtomArray(2)
+    new_residue.atom_name = ["C1", "C2"]
+    new_residue.res_id = [atoms.res_id[-1] + 1] * 2
+    new_residue.res_name = [NEW_RES_NAME] * 2
+    new_residue.chain_id = [atoms.chain_id[-1]] * 2
+    new_residue.hetero = [True] * 2
+    new_residue.element = ["C"] * 2
+    new_residue.bonds = struc.BondList(2, np.array([[0, 1]]))
+    pdbx.set_structure(pdbx_file, atoms + new_residue)
+    test_chem_comp = pdbx_file.block["chem_comp"]
+
+    n_existing = ref_chem_comp.row_count
+    assert test_chem_comp.row_count == n_existing + 1
+    assert test_chem_comp.keys() == ref_chem_comp.keys()
+    for key, (ref_data, ref_mask) in ref_columns.items():
+        test_column = test_chem_comp[key]
+        # The existing rows are unchanged
+        assert test_column.as_array(str)[:n_existing].tolist() == ref_data.tolist()
+        assert _get_mask(test_column)[:n_existing].tolist() == ref_mask.tolist()
+        # Only the ID and type are known for the new component
+        if key == "id":
+            assert test_column.as_array(str)[-1] == NEW_RES_NAME
+        elif key == "type":
+            assert test_column.as_array(str)[-1] == "other"
+        else:
+            assert _get_mask(test_column)[-1] == pdbx.MaskValue.MISSING
+
+
+def _get_mask(column):
+    if column.mask is None:
+        return np.full(len(column), pdbx.MaskValue.PRESENT)
+    return column.mask.array
+
+
+@pytest.mark.parametrize("format", ["cif", "bcif"])
 def test_extra_fields(tmp_path, format):
     EXTRA_FIELDS = ["atom_id", "b_factor", "occupancy", "charge", "entity_id"]
 
