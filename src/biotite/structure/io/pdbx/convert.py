@@ -929,6 +929,11 @@ def set_structure(
     This is the case, when two equal residues in the same chain have
     the same (or a masked) `res_id`.
 
+    The type of each residue added to the ``chem_comp`` category is
+    taken from the PDB *Chemical Component Dictionary* based on its
+    residue name.
+    Residues unknown to the dictionary get the type ``'other'``.
+
     Examples
     --------
 
